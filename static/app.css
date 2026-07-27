@@ -37,19 +37,25 @@ body {
 
 .sc-message {
   display: flex;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
-.sc-message--agent {
+.sc-message--mine {
+  justify-content: flex-start;
+}
+
+.sc-message--theirs {
   justify-content: flex-end;
 }
 
 .sc-bubble {
   width: fit-content;
-  max-width: min(78%, 640px);
-  padding: 10px 12px;
-  border-radius: 8px;
+  max-width: min(72%, 560px);
+  padding: 7px 10px;
+  border-radius: 10px;
   background: #2b2b2b;
+  font-size: 14px;
+  line-height: 1.35;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -68,9 +74,10 @@ body {
 }
 
 .sc-message-meta {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   color: #bdbdbd;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .sc-empty {
@@ -231,7 +238,7 @@ textarea.sc-input {
   }
 
   .sc-bubble {
-    max-width: 92%;
+    max-width: 86%;
   }
 
   .sc-details-grid {

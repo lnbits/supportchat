@@ -762,10 +762,10 @@ function renderMessages() {
       message => `
         <div class="sc-message ${
           message.senderType === 'agent'
-            ? 'sc-message--agent'
+            ? 'sc-message--agent sc-message--mine'
             : message.senderType === 'internal_note'
-              ? 'sc-message--note'
-              : ''
+              ? 'sc-message--note sc-message--mine'
+              : 'sc-message--theirs'
         }">
           <div class="sc-bubble">
             <div class="sc-message-meta">${escapeHtml(

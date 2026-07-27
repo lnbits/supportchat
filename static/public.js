@@ -296,7 +296,9 @@ function renderMessages() {
     .map(
       message => `
         <div class="sc-message ${
-          message.senderType === 'agent' ? 'sc-message--agent' : ''
+          message.senderType === 'agent'
+            ? 'sc-message--agent sc-message--theirs'
+            : 'sc-message--mine'
         }">
           <div class="sc-bubble">
             <div class="sc-message-meta">${escapeHtml(
