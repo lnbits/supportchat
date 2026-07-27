@@ -2,7 +2,7 @@
   "id": "supportchat",
   "name": "Support Chat",
   "short_description": "Run simple public support inboxes with live chat threads.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "min_lnbits_version": "1.5.6",
 
   "extension_type": "wasm",
@@ -38,7 +38,31 @@
         "visibility": "authenticated"
       },
       {
+        "name": "update-conversation",
+        "visibility": "authenticated"
+      },
+      {
         "name": "resolve-conversation",
+        "visibility": "authenticated"
+      },
+      {
+        "name": "mark-conversation-read",
+        "visibility": "authenticated"
+      },
+      {
+        "name": "add-internal-note",
+        "visibility": "authenticated"
+      },
+      {
+        "name": "list-canned-replies",
+        "visibility": "authenticated"
+      },
+      {
+        "name": "save-canned-reply",
+        "visibility": "authenticated"
+      },
+      {
+        "name": "delete-canned-reply",
         "visibility": "authenticated"
       },
       {
@@ -143,12 +167,66 @@
       }
     },
     {
+      "method": "PUT",
+      "path": "/conversations/{conversation_id}",
+      "export": "update-conversation",
+      "auth": "user",
+      "path_params": {
+        "conversation_id": "conversationId"
+      }
+    },
+    {
       "method": "POST",
       "path": "/conversations/{conversation_id}/resolve",
       "export": "resolve-conversation",
       "auth": "user",
       "path_params": {
         "conversation_id": "conversationId"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversation_id}/read",
+      "export": "mark-conversation-read",
+      "auth": "user",
+      "path_params": {
+        "conversation_id": "conversationId"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversation_id}/notes",
+      "export": "add-internal-note",
+      "auth": "user",
+      "path_params": {
+        "conversation_id": "conversationId"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/inboxes/{inbox_id}/canned-replies",
+      "export": "list-canned-replies",
+      "auth": "user",
+      "path_params": {
+        "inbox_id": "inboxId"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/inboxes/{inbox_id}/canned-replies",
+      "export": "save-canned-reply",
+      "auth": "user",
+      "path_params": {
+        "inbox_id": "inboxId"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/canned-replies/{reply_id}",
+      "export": "delete-canned-reply",
+      "auth": "user",
+      "path_params": {
+        "reply_id": "replyId"
       }
     },
     {
@@ -207,7 +285,13 @@
             "id",
             "name",
             "welcome_message",
-            "is_active"
+            "is_active",
+            "accent_color",
+            "launcher_text",
+            "offline_message",
+            "office_hours_enabled",
+            "office_hours_start",
+            "office_hours_end"
           ]
         },
         {
@@ -219,6 +303,10 @@
             "visitor_name",
             "subject",
             "status",
+            "priority",
+            "tags",
+            "agent_last_read_at",
+            "snoozed_until",
             "created_at",
             "updated_at",
             "last_message_at"
@@ -252,6 +340,10 @@
             "visitor_email",
             "subject",
             "status",
+            "priority",
+            "tags",
+            "agent_last_read_at",
+            "snoozed_until",
             "created_at",
             "updated_at",
             "last_message_at"

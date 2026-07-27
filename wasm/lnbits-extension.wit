@@ -119,7 +119,13 @@ world supportchat {
   export list-conversations: func(request-json: string) -> string;
   export list-messages: func(request-json: string) -> string;
   export reply-conversation: func(request-json: string) -> string;
+  export update-conversation: func(request-json: string) -> string;
   export resolve-conversation: func(request-json: string) -> string;
+  export mark-conversation-read: func(request-json: string) -> string;
+  export add-internal-note: func(request-json: string) -> string;
+  export list-canned-replies: func(request-json: string) -> string;
+  export save-canned-reply: func(request-json: string) -> string;
+  export delete-canned-reply: func(request-json: string) -> string;
   export get-public-inbox: func(request-json: string) -> string;
   export start-conversation: func(request-json: string) -> string;
   export get-public-conversation: func(request-json: string) -> string;

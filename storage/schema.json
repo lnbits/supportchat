@@ -20,6 +20,30 @@
           "type": "boolean"
         },
         {
+          "name": "accent_color",
+          "type": "string"
+        },
+        {
+          "name": "launcher_text",
+          "type": "string"
+        },
+        {
+          "name": "offline_message",
+          "type": "string"
+        },
+        {
+          "name": "office_hours_enabled",
+          "type": "boolean"
+        },
+        {
+          "name": "office_hours_start",
+          "type": "integer"
+        },
+        {
+          "name": "office_hours_end",
+          "type": "integer"
+        },
+        {
           "name": "created_at",
           "type": "datetime"
         },
@@ -54,6 +78,23 @@
         {
           "name": "status",
           "type": "string"
+        },
+        {
+          "name": "priority",
+          "type": "string"
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "list": true
+        },
+        {
+          "name": "agent_last_read_at",
+          "type": "integer"
+        },
+        {
+          "name": "snoozed_until",
+          "type": "integer"
         },
         {
           "name": "created_at",
@@ -100,6 +141,62 @@
           "type": "datetime"
         }
       ]
+    },
+    "internal_notes": {
+      "fields": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "conversation_id",
+          "type": "string"
+        },
+        {
+          "name": "inbox_id",
+          "type": "string"
+        },
+        {
+          "name": "sender_name",
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "type": "string"
+        },
+        {
+          "name": "created_at",
+          "type": "datetime"
+        }
+      ]
+    },
+    "canned_replies": {
+      "fields": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "inbox_id",
+          "type": "string"
+        },
+        {
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "type": "string"
+        },
+        {
+          "name": "created_at",
+          "type": "datetime"
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime"
+        }
+      ]
     }
   },
   "indexes": [
@@ -116,6 +213,16 @@
     {
       "table": "messages",
       "name": "messages_by_inbox",
+      "field": "inbox_id"
+    },
+    {
+      "table": "internal_notes",
+      "name": "internal_notes_by_conversation",
+      "field": "conversation_id"
+    },
+    {
+      "table": "canned_replies",
+      "name": "canned_replies_by_inbox",
       "field": "inbox_id"
     }
   ]

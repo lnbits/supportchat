@@ -3,8 +3,12 @@ const client = window.createLNbitsSupportChatClient({
 })
 
 const state = {
+  cannedReplies: [],
+  cannedReplyForm: {title: '', body: ''},
   conversations: [],
   conversationSearch: '',
+  conversationStatus: '',
+  conversationPriority: '',
   error: '',
   form: emptyForm(),
   inboxes: [],
@@ -30,7 +34,14 @@ function emptyForm() {
     id: '',
     name: 'Support',
     welcomeMessage: 'Send us a message and we will reply here.',
-    isActive: true
+    isActive: true,
+    accentColor: '#f2a900',
+    launcherText: 'Chat with support',
+    offlineMessage:
+      'We are currently offline. Leave a message and we will reply.',
+    officeHoursEnabled: false,
+    officeHoursStart: 9,
+    officeHoursEnd: 17
   }
 }
 
@@ -63,7 +74,15 @@ async function saveInbox() {
     const payload = {
       name: fieldValue(container, 'name'),
       welcomeMessage: fieldValue(container, 'welcomeMessage'),
-      isActive: Boolean(container?.querySelector('[name="isActive"]')?.checked)
+      isActive: Boolean(container?.querySelector('[name="isActive"]')?.checked),
+      accentColor: fieldValue(container, 'accentColor'),
+      launcherText: fieldValue(container, 'launcherText'),
+      offlineMessage: fieldValue(container, 'offlineMessage'),
+      officeHoursEnabled: Boolean(
+        container?.querySelector('[name="officeHoursEnabled"]')?.checked
+      ),
+      officeHoursStart: Number(fieldValue(container, 'officeHoursStart')),
+      officeHoursEnd: Number(fieldValue(container, 'officeHoursEnd'))
     }
     const response = state.form.id
       ? await client.updateInbox(state.form.id, payload)
@@ -100,19 +119,25 @@ async function selectInbox(inboxId, options = {}) {
   state.messages = []
   if (!options.skipRender) render()
   await subscribeInbox(inbox.id)
-  await fetchConversations()
+  await Promise.all([fetchConversations(), fetchCannedReplies()])
 }
 
 async function fetchConversations() {
   if (!state.selectedInbox) return
   const searchInput = byId('conversation-search')
   if (searchInput) state.conversationSearch = searchInput.value || ''
+  const statusInput = byId('conversation-status-filter')
+  if (statusInput) state.conversationStatus = statusInput.value || ''
+  const priorityInput = byId('conversation-priority-filter')
+  if (priorityInput) state.conversationPriority = priorityInput.value || ''
   await withError(async () => {
     state.loading = 'conversations'
     render()
     const response = await client.listConversations(state.selectedInbox.id, {
       rowsPerPage: 100,
       search: state.conversationSearch,
+      status: state.conversationStatus,
+      priority: state.conversationPriority,
       sortBy: 'last_message_at',
       descending: true
     })
@@ -135,7 +160,14 @@ async function selectConversation(conversationId) {
   state.selectedConversation = conversation
   render()
   await subscribeConversation(conversation.id)
-  await fetchMessages()
+  await Promise.all([
+    fetchMessages(),
+    client.markConversationRead(conversation.id)
+  ])
+  state.selectedConversation.unreadCount = 0
+  const stored = state.conversations.find(item => item.id === conversation.id)
+  if (stored) stored.unreadCount = 0
+  render()
 }
 
 async function fetchMessages() {
@@ -190,6 +222,91 @@ async function resolveSelectedConversation() {
   render()
 }
 
+async function updateSelectedConversation(patch) {
+  if (!state.selectedConversation) return
+  await withError(async () => {
+    state.loading = 'updating-conversation'
+    render()
+    const response = await client.updateConversation(
+      state.selectedConversation.id,
+      patch
+    )
+    state.selectedConversation =
+      response.conversation || state.selectedConversation
+    await fetchConversations()
+  }, 'Could not update conversation.')
+  state.loading = ''
+  render()
+}
+
+async function saveConversationDetails() {
+  const container = byId('conversation-details')
+  await updateSelectedConversation({
+    status: fieldValue(container, 'status'),
+    priority: fieldValue(container, 'priority'),
+    tags: fieldValue(container, 'tags')
+  })
+}
+
+async function addInternalNote() {
+  if (!state.selectedConversation) return
+  const container = byId('note-box')
+  const body = fieldValue(container, 'body').trim()
+  if (!body) return
+  await withError(async () => {
+    state.loading = 'adding-note'
+    render()
+    const response = await client.addInternalNote(
+      state.selectedConversation.id,
+      {body}
+    )
+    addMessage(response.note)
+  }, 'Could not add internal note.')
+  state.loading = ''
+  render()
+  scrollThreadToBottom()
+}
+
+async function fetchCannedReplies() {
+  if (!state.selectedInbox) return
+  await withError(async () => {
+    const response = await client.listCannedReplies(state.selectedInbox.id, {
+      rowsPerPage: 100
+    })
+    state.cannedReplies = response.cannedReplies || []
+  }, 'Could not load canned replies.')
+  render()
+}
+
+async function saveCannedReply() {
+  if (!state.selectedInbox) return
+  const container = byId('canned-reply-form')
+  const title = fieldValue(container, 'title').trim()
+  const body = fieldValue(container, 'body').trim()
+  if (!title || !body) return
+  await withError(async () => {
+    await client.saveCannedReply(state.selectedInbox.id, {title, body})
+    state.cannedReplyForm = {title: '', body: ''}
+    await fetchCannedReplies()
+  }, 'Could not save canned reply.')
+}
+
+async function deleteCannedReply(replyId) {
+  await withError(async () => {
+    await client.deleteCannedReply(replyId)
+    await fetchCannedReplies()
+  }, 'Could not delete canned reply.')
+}
+
+function applyCannedReply(replyId) {
+  const reply = state.cannedReplies.find(item => item.id === replyId)
+  const textarea = byId('reply-box')?.querySelector('[name="body"]')
+  if (reply && textarea) {
+    textarea.value = reply.body
+    textarea.focus()
+  }
+}
+
 async function subscribeInbox(inboxId) {
   if (state.unsubscribeInbox) state.unsubscribeInbox()
   state.unsubscribeInbox = await client.subscribeWebsocket(
@@ -230,7 +347,13 @@ function editInbox(inboxId) {
     id: inbox.id,
     name: inbox.name,
     welcomeMessage: inbox.welcomeMessage,
-    isActive: inbox.isActive
+    isActive: inbox.isActive,
+    accentColor: inbox.accentColor,
+    launcherText: inbox.launcherText,
+    offlineMessage: inbox.offlineMessage,
+    officeHoursEnabled: inbox.officeHoursEnabled,
+    officeHoursStart: inbox.officeHoursStart,
+    officeHoursEnd: inbox.officeHoursEnd
   }
   render()
 }
@@ -239,6 +362,16 @@ async function copyInboxUrl() {
   if (!state.selectedInbox) return
   await navigator.clipboard.writeText(publicInboxUrl(state.selectedInbox))
   client.notify('Public inbox URL copied.', 'positive')
+}
+
+async function copyEmbedCode() {
+  if (!state.selectedInbox) return
+  const scriptUrl = `${window.location.origin}/ext-assets/supportchat/widget.js`
+  const code = `<script src="${scriptUrl}" data-inbox="${state.selectedInbox.id}" data-label="${attr(
+    state.selectedInbox.launcherText
+  )}"></script>`
+  await navigator.clipboard.writeText(code)
+  client.notify('Same-origin widget snippet copied.', 'positive')
 }
 
 function publicInboxUrl(inbox) {
@@ -317,6 +450,46 @@ function renderInboxForm() {
         <input name="isActive" type="checkbox" ${state.form.isActive ? 'checked' : ''} />
         <span class="q-ml-sm">Active</span>
       </label>
+      <div class="row q-col-gutter-sm">
+        <label class="col-12 col-sm-6 q-mb-md">
+          <span class="text-caption sc-muted">Accent color</span>
+          <input class="sc-input" name="accentColor" type="color" value="${attr(
+            state.form.accentColor
+          )}" />
+        </label>
+        <label class="col-12 col-sm-6 q-mb-md">
+          <span class="text-caption sc-muted">Launcher text</span>
+          <input class="sc-input" name="launcherText" maxlength="40" value="${attr(
+            state.form.launcherText
+          )}" />
+        </label>
+      </div>
+      <label class="block q-mb-md">
+        <span class="text-caption sc-muted">Offline message</span>
+        <textarea class="sc-input" name="offlineMessage" maxlength="280">${escapeHtml(
+          state.form.offlineMessage
+        )}</textarea>
+      </label>
+      <label class="row items-center q-mb-sm">
+        <input name="officeHoursEnabled" type="checkbox" ${
+          state.form.officeHoursEnabled ? 'checked' : ''
+        } />
+        <span class="q-ml-sm">Use office hours (UTC)</span>
+      </label>
+      <div class="row q-col-gutter-sm q-mb-md">
+        <label class="col-6">
+          <span class="text-caption sc-muted">Start hour</span>
+          <input class="sc-input" name="officeHoursStart" type="number" min="0" max="23" value="${attr(
+            state.form.officeHoursStart
+          )}" />
+        </label>
+        <label class="col-6">
+          <span class="text-caption sc-muted">End hour</span>
+          <input class="sc-input" name="officeHoursEnd" type="number" min="0" max="23" value="${attr(
+            state.form.officeHoursEnd
+          )}" />
+        </label>
+      </div>
       <button class="q-btn bg-primary text-white full-width" type="button" data-action="save-inbox" ${
         state.loading === 'saving' ? 'disabled' : ''
       }>${state.form.id ? 'Save inbox' : 'Create inbox'}</button>
@@ -360,6 +533,7 @@ function renderInboxWorkspace() {
           </div>
           <div class="row q-gutter-sm">
             <button class="q-btn q-btn--flat" data-action="copy-url" type="button">Copy URL</button>
+            <button class="q-btn q-btn--flat" data-action="copy-embed" type="button">Copy widget</button>
             <button class="q-btn q-btn--flat" data-action="edit-inbox" data-id="${attr(
               state.selectedInbox.id
             )}" type="button">Edit</button>
@@ -369,9 +543,49 @@ function renderInboxWorkspace() {
       </div>
 
       <div class="row q-col-gutter-md">
-        <section class="col-12 col-md-5">${renderConversationList()}</section>
+        <section class="col-12 col-md-5">
+          ${renderConversationList()}
+          ${renderCannedReplies()}
+        </section>
         <section class="col-12 col-md-7">${renderConversationThread()}</section>
       </div>
+    </div>
+  `
+}
+
+function renderCannedReplies() {
+  return `
+    <div class="sc-panel q-pa-md q-mt-md">
+      <h3 class="text-subtitle2 text-weight-bold q-mt-none q-mb-sm">Canned replies</h3>
+      <div id="canned-reply-form" class="q-gutter-sm">
+        <input class="sc-input" name="title" maxlength="80" placeholder="Reply title" value="${attr(
+          state.cannedReplyForm.title
+        )}" />
+        <textarea class="sc-input" name="body" maxlength="2000" placeholder="Reply text">${escapeHtml(
+          state.cannedReplyForm.body
+        )}</textarea>
+        <button class="q-btn q-btn--flat full-width" type="button" data-action="save-canned-reply">Add canned reply</button>
+      </div>
+      ${
+        state.cannedReplies.length
+          ? `<div class="sc-list q-mt-sm">${state.cannedReplies
+              .map(
+                reply => `
+                  <div class="sc-canned-row">
+                    <button class="sc-canned-apply" type="button" data-action="apply-canned-reply" data-id="${attr(
+                      reply.id
+                    )}">${escapeHtml(reply.title)}</button>
+                    <button class="sc-icon-button text-negative" type="button" aria-label="Delete ${attr(
+                      reply.title
+                    )}" data-action="delete-canned-reply" data-id="${attr(
+                      reply.id
+                    )}">×</button>
+                  </div>
+                `
+              )
+              .join('')}</div>`
+          : '<p class="text-caption sc-muted q-mb-none">No canned replies yet.</p>'
+      }
     </div>
   `
 }
@@ -384,6 +598,28 @@ function renderConversationList() {
           state.conversationSearch
         )}" />
         <button class="q-btn q-btn--flat" type="button" data-action="refresh-conversations">Refresh</button>
+      </div>
+      <div class="row q-col-gutter-sm q-px-sm q-pb-sm">
+        <label class="col-6">
+          <span class="text-caption sc-muted">Status</span>
+          <select id="conversation-status-filter" class="sc-input">
+            ${selectOptions(
+              ['', 'open', 'pending', 'snoozed', 'resolved'],
+              state.conversationStatus,
+              'All statuses'
+            )}
+          </select>
+        </label>
+        <label class="col-6">
+          <span class="text-caption sc-muted">Priority</span>
+          <select id="conversation-priority-filter" class="sc-input">
+            ${selectOptions(
+              ['', 'low', 'normal', 'high', 'urgent'],
+              state.conversationPriority,
+              'All priorities'
+            )}
+          </select>
+        </label>
       </div>
       ${
         state.conversations.length
@@ -404,8 +640,18 @@ function renderConversationList() {
                       <small class="sc-muted">${escapeHtml(
                         conversation.visitorName || ''
                       )}${conversation.visitorEmail ? ` · ${escapeHtml(conversation.visitorEmail)}` : ''}</small>
+                      <small class="sc-muted">${escapeHtml(
+                        conversation.priority || 'normal'
+                      )}${conversation.tags?.length ? ` · ${conversation.tags.map(escapeHtml).join(', ')}` : ''}</small>
                     </span>
-                    <span class="sc-badge">${escapeHtml(conversation.status)}</span>
+                    <span class="column items-end q-gutter-xs">
+                      ${
+                        conversation.unreadCount
+                          ? `<span class="sc-unread" data-testid="unread-count">${conversation.unreadCount}</span>`
+                          : ''
+                      }
+                      <span class="sc-badge">${escapeHtml(conversation.status)}</span>
+                    </span>
                   </button>
                 `
               )
@@ -439,17 +685,63 @@ function renderConversationThread() {
         }
       </div>
 
+      <div id="conversation-details" class="sc-details-grid q-mb-md">
+        <label>
+          <span class="text-caption sc-muted">Status</span>
+          <select class="sc-input" name="status" data-testid="conversation-status">
+            ${selectOptions(
+              ['open', 'pending', 'snoozed', 'resolved'],
+              state.selectedConversation.status
+            )}
+          </select>
+        </label>
+        <label>
+          <span class="text-caption sc-muted">Priority</span>
+          <select class="sc-input" name="priority" data-testid="conversation-priority">
+            ${selectOptions(
+              ['low', 'normal', 'high', 'urgent'],
+              state.selectedConversation.priority
+            )}
+          </select>
+        </label>
+        <label class="sc-details-tags">
+          <span class="text-caption sc-muted">Tags (comma separated)</span>
+          <input class="sc-input" name="tags" maxlength="330" value="${attr(
+            (state.selectedConversation.tags || []).join(', ')
+          )}" data-testid="conversation-tags" />
+        </label>
+        <button class="q-btn q-btn--flat" data-action="save-conversation-details" type="button">Save ticket</button>
+      </div>
+
       <div id="thread" class="sc-thread q-pr-xs q-mb-md">
         ${renderMessages()}
       </div>
 
       <div id="reply-box" class="q-gutter-sm">
+        ${
+          state.cannedReplies.length
+            ? `<select class="sc-input" data-action="choose-canned-reply" aria-label="Canned reply">
+                <option value="">Choose a canned reply</option>
+                ${state.cannedReplies
+                  .map(
+                    reply =>
+                      `<option value="${attr(reply.id)}">${escapeHtml(reply.title)}</option>`
+                  )
+                  .join('')}
+              </select>`
+            : ''
+        }
         <textarea class="sc-input" name="body" maxlength="2000" placeholder="Reply" ${
           state.selectedConversation.status === 'resolved' ? 'disabled' : ''
-        }></textarea>
+        } data-testid="agent-reply"></textarea>
         <button class="q-btn bg-primary text-white" type="button" data-action="send-reply" ${
           state.selectedConversation.status === 'resolved' ? 'disabled' : ''
         }>Send</button>
+      </div>
+
+      <div id="note-box" class="q-gutter-sm q-mt-md">
+        <textarea class="sc-input sc-note-input" name="body" maxlength="2000" placeholder="Internal note (visitors cannot see this)" data-testid="internal-note"></textarea>
+        <button class="q-btn q-btn--flat" type="button" data-action="add-note">Add internal note</button>
       </div>
     </div>
   `
@@ -461,7 +753,11 @@ function renderMessages() {
     .map(
       message => `
         <div class="sc-message ${
-          message.senderType === 'agent' ? 'sc-message--agent' : ''
+          message.senderType === 'agent'
+            ? 'sc-message--agent'
+            : message.senderType === 'internal_note'
+              ? 'sc-message--note'
+              : ''
         }">
           <div class="sc-bubble">
             <div class="sc-message-meta">${escapeHtml(
@@ -495,12 +791,33 @@ function bindEvents() {
       if (action === 'edit-inbox') editInbox(id)
       if (action === 'delete-inbox') deleteSelectedInbox()
       if (action === 'copy-url') copyInboxUrl()
+      if (action === 'copy-embed') copyEmbedCode()
       if (action === 'refresh-conversations') fetchConversations()
       if (action === 'select-conversation') selectConversation(id)
       if (action === 'resolve-conversation') resolveSelectedConversation()
+      if (action === 'save-conversation-details') saveConversationDetails()
       if (action === 'send-reply') replyToConversation()
+      if (action === 'add-note') addInternalNote()
+      if (action === 'save-canned-reply') saveCannedReply()
+      if (action === 'apply-canned-reply') applyCannedReply(id)
+      if (action === 'delete-canned-reply') deleteCannedReply(id)
     })
   })
+  const statusFilter = byId('conversation-status-filter')
+  if (statusFilter) statusFilter.addEventListener('change', fetchConversations)
+  const priorityFilter = byId('conversation-priority-filter')
+  if (priorityFilter) {
+    priorityFilter.addEventListener('change', fetchConversations)
+  }
+  const cannedSelect = root.querySelector(
+    '[data-action="choose-canned-reply"]'
+  )
+  if (cannedSelect) {
+    cannedSelect.addEventListener('change', event => {
+      applyCannedReply(event.currentTarget.value)
+      event.currentTarget.value = ''
+    })
+  }
 }
 
 function byId(id) {
@@ -535,4 +852,15 @@ function escapeHtml(value) {
 
 function attr(value) {
   return escapeHtml(value).replace(/`/g, '&#96;')
+}
+
+function selectOptions(values, selected, emptyLabel = '') {
+  return values
+    .map(value => {
+      const label = value || emptyLabel
+      return `<option value="${attr(value)}" ${
+        value === selected ? 'selected' : ''
+      }>${escapeHtml(label)}</option>`
+    })
+    .join('')
 }

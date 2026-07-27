@@ -1,0 +1,112 @@
+{
+  "version": 2,
+  "operations": [
+    {
+      "op": "add_field",
+      "table": "inboxes",
+      "field": "accent_color",
+      "type": "string",
+      "default": "#f2a900"
+    },
+    {
+      "op": "add_field",
+      "table": "inboxes",
+      "field": "launcher_text",
+      "type": "string",
+      "default": "Chat with support"
+    },
+    {
+      "op": "add_field",
+      "table": "inboxes",
+      "field": "offline_message",
+      "type": "string",
+      "default": "We are currently offline. Leave a message and we will reply."
+    },
+    {
+      "op": "add_field",
+      "table": "inboxes",
+      "field": "office_hours_enabled",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "op": "add_field",
+      "table": "inboxes",
+      "field": "office_hours_start",
+      "type": "integer",
+      "default": 9
+    },
+    {
+      "op": "add_field",
+      "table": "inboxes",
+      "field": "office_hours_end",
+      "type": "integer",
+      "default": 17
+    },
+    {
+      "op": "add_field",
+      "table": "conversations",
+      "field": "priority",
+      "type": "string",
+      "default": "normal"
+    },
+    {
+      "op": "add_field",
+      "table": "conversations",
+      "field": "tags",
+      "type": "string",
+      "list": true,
+      "default": []
+    },
+    {
+      "op": "add_field",
+      "table": "conversations",
+      "field": "agent_last_read_at",
+      "type": "integer",
+      "default": 0
+    },
+    {
+      "op": "add_field",
+      "table": "conversations",
+      "field": "snoozed_until",
+      "type": "integer",
+      "default": 0
+    },
+    {
+      "op": "create_table",
+      "table": "internal_notes",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "conversation_id", "type": "string"},
+        {"name": "inbox_id", "type": "string"},
+        {"name": "sender_name", "type": "string"},
+        {"name": "body", "type": "string"},
+        {"name": "created_at", "type": "datetime"}
+      ]
+    },
+    {
+      "op": "create_table",
+      "table": "canned_replies",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "inbox_id", "type": "string"},
+        {"name": "title", "type": "string"},
+        {"name": "body", "type": "string"},
+        {"name": "created_at", "type": "datetime"},
+        {"name": "updated_at", "type": "datetime"}
+      ]
+    },
+    {
+      "op": "create_index",
+      "table": "internal_notes",
+      "name": "internal_notes_by_conversation",
+      "field": "conversation_id"
+    },
+    {
+      "op": "create_index",
+      "table": "canned_replies",
+      "name": "canned_replies_by_inbox",
+      "field": "inbox_id"
+    }
+  ]
+}

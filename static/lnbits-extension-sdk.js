@@ -30,6 +30,21 @@
         })
       },
 
+      getSessionValue(key) {
+        return bridgeRequest({
+          action: 'storage.session.get',
+          key
+        })
+      },
+
+      setSessionValue(key, value) {
+        return bridgeRequest({
+          action: 'storage.session.set',
+          key,
+          value
+        })
+      },
+
       createInbox(payload) {
         return request(`${baseUrl}/inboxes`, {
           method: 'POST',
@@ -86,6 +101,16 @@
         )
       },
 
+      updateConversation(conversationId, payload) {
+        return request(
+          `${baseUrl}/conversations/${encodeURIComponent(conversationId)}`,
+          {
+            method: 'PUT',
+            body: payload
+          }
+        )
+      },
+
       resolveConversation(conversationId) {
         return request(
           `${baseUrl}/conversations/${encodeURIComponent(
@@ -94,6 +119,56 @@
           {
             method: 'POST',
             body: {}
+          }
+        )
+      },
+
+      markConversationRead(conversationId) {
+        return request(
+          `${baseUrl}/conversations/${encodeURIComponent(conversationId)}/read`,
+          {
+            method: 'POST',
+            body: {}
+          }
+        )
+      },
+
+      addInternalNote(conversationId, payload) {
+        return request(
+          `${baseUrl}/conversations/${encodeURIComponent(
+            conversationId
+          )}/notes`,
+          {
+            method: 'POST',
+            body: payload
+          }
+        )
+      },
+
+      listCannedReplies(inboxId, params = {}) {
+        return request(
+          withQuery(
+            `${baseUrl}/inboxes/${encodeURIComponent(inboxId)}/canned-replies`,
+            params
+          )
+        )
+      },
+
+      saveCannedReply(inboxId, payload) {
+        return request(
+          `${baseUrl}/inboxes/${encodeURIComponent(inboxId)}/canned-replies`,
+          {
+            method: 'POST',
+            body: payload
+          }
+        )
+      },
+
+      deleteCannedReply(replyId) {
+        return request(
+          `${baseUrl}/canned-replies/${encodeURIComponent(replyId)}`,
+          {
+            method: 'DELETE'
           }
         )
       },

@@ -39,9 +39,19 @@ async function load() {
       return
     }
     if (params.inboxId) {
-      state.mode = 'start'
       const response = await client.getPublicInbox(params.inboxId)
       state.inbox = response.inbox
+      const conversationId = await restoreConversationId(params.inboxId)
+      if (conversationId) {
+        try {
+          state.mode = 'conversation'
+          await loadConversation(conversationId)
+          return
+        } catch (_error) {
+          await forgetConversation(params.inboxId)
+        }
+      }
+      state.mode = 'start'
       return
     }
     throw new Error('Support page not found.')
@@ -58,25 +68,31 @@ async function loadConversation(conversationId) {
   state.inbox = response.inbox
   state.conversation = response.conversation
   state.messages = response.messages || []
-  state.visitor.name = state.conversation.visitorName || ''
+  state.visitor.name = await restoreVisitorName(conversationId)
+  await rememberConversation(state.inbox.id, conversationId)
   await subscribeConversation(conversationId)
 }
 
 async function startConversation() {
   if (!state.inbox) return
   const container = document.getElementById('start-box')
+  const name = cleanVisitorName(fieldValue(container, 'name'))
   const body = fieldValue(container, 'body').trim()
   if (!body) return
   await withError(async () => {
     state.loading = 'sending'
     render()
     const response = await client.startConversation(state.inbox.id, {
-      name: fieldValue(container, 'name'),
+      name,
       email: fieldValue(container, 'email'),
       subject: fieldValue(container, 'subject'),
       body
     })
     const conversationId = response.conversation.id
+    state.visitor.name =
+      name || cleanVisitorName(response.conversation.visitorName)
+    await rememberVisitorName(conversationId)
+    await rememberConversation(state.inbox.id, conversationId)
     await client.replaceRoute(
       `/ext/supportchat/c/${encodeURIComponent(conversationId)}`
     )
@@ -87,13 +103,22 @@ async function startConversation() {
 
 async function postMessage() {
   if (!state.conversation) return
-  const body = fieldValue(document.getElementById('message-box'), 'body').trim()
+  const container = document.getElementById('message-box')
+  const nameInput = container?.querySelector('[name="name"]')
+  const name = cleanVisitorName(nameInput?.value)
+  const body = fieldValue(container, 'body').trim()
+  if (!name) {
+    nameInput?.reportValidity()
+    return
+  }
   if (!body) return
+  state.visitor.name = name
   await withError(async () => {
     state.loading = 'sending'
     render()
+    await rememberVisitorName(state.conversation.id)
     const response = await client.postPublicMessage(state.conversation.id, {
-      name: state.visitor.name,
+      name,
       body
     })
     addMessage(response.message)
@@ -101,6 +126,14 @@ async function postMessage() {
   state.loading = ''
   render()
   scrollThreadToBottom()
+}
+
+async function startAnotherConversation() {
+  if (!state.inbox) return
+  await forgetConversation(state.inbox.id)
+  await client.replaceRoute(
+    `/ext/supportchat/i/${encodeURIComponent(state.inbox.id)}`
+  )
 }
 
 async function subscribeConversation(conversationId) {
@@ -136,8 +169,11 @@ async function withError(fn, fallback) {
 }
 
 function render() {
+  const accent = state.inbox?.accentColor || '#f2a900'
   root.innerHTML = `
-    <main class="sc-shell q-pa-md column items-center">
+    <main class="sc-shell q-pa-md column items-center" style="--sc-accent:${attr(
+      accent
+    )}">
       <section class="sc-public-card sc-panel q-pa-md">
         <div class="row items-start justify-between q-gutter-md q-mb-md">
           <div>
@@ -156,6 +192,10 @@ function render() {
                 ? `<p class="sc-muted q-my-xs">${escapeHtml(
                     state.conversation.subject
                   )} · ${escapeHtml(state.conversation.status)}</p>`
+                : state.inbox
+                  ? `<p class="sc-presence ${
+                      state.inbox.isOnline ? 'sc-presence--online' : ''
+                    }">${state.inbox.isOnline ? 'Online' : 'Offline'}</p>`
                 : ''
             }
           </div>
@@ -169,6 +209,13 @@ function render() {
         </div>
 
         ${state.error ? `<div class="q-banner bg-negative text-white q-mb-md q-pa-md">${escapeHtml(state.error)}</div>` : ''}
+        ${
+          state.inbox && !state.inbox.isOnline
+            ? `<div class="q-banner sc-offline-banner q-mb-md q-pa-md">${escapeHtml(
+                state.inbox.offlineMessage
+              )}</div>`
+            : ''
+        }
         ${state.loading === 'initial' ? '<div class="sc-empty q-pa-md text-center">Loading...</div>' : ''}
         ${state.mode === 'start' && state.inbox ? renderStartForm() : ''}
         ${
@@ -209,7 +256,7 @@ function renderStartForm() {
       </label>
       <button class="q-btn bg-primary text-white" type="button" data-action="start-conversation" ${
         state.loading === 'sending' || !state.inbox.isActive ? 'disabled' : ''
-      }>Send</button>
+      } data-testid="start-conversation">Send</button>
     </div>
   `
 }
@@ -221,6 +268,12 @@ function renderConversation() {
         ${renderMessages()}
       </div>
       <div id="message-box" class="q-gutter-sm">
+        <label class="block">
+          <span class="text-caption sc-muted">Name</span>
+          <input class="sc-input" name="name" maxlength="80" required value="${attr(
+            state.visitor.name
+          )}" />
+        </label>
         <textarea class="sc-input" name="body" maxlength="2000" placeholder="Message" ${
           state.conversation.status === 'resolved' ? 'disabled' : ''
         }></textarea>
@@ -228,8 +281,9 @@ function renderConversation() {
           state.loading === 'sending' || state.conversation.status === 'resolved'
             ? 'disabled'
             : ''
-        }>Send</button>
+        } data-testid="visitor-send">Send</button>
       </div>
+      <button class="q-btn q-btn--flat" type="button" data-action="start-another-conversation">Start another conversation</button>
     </div>
   `
 }
@@ -262,8 +316,14 @@ function bindEvents() {
       const action = event.currentTarget.dataset.action
       if (action === 'start-conversation') startConversation()
       if (action === 'send-message') postMessage()
+      if (action === 'start-another-conversation') startAnotherConversation()
     })
   })
+  root
+    .querySelector('#message-box [name="name"]')
+    ?.addEventListener('input', event => {
+      state.visitor.name = cleanVisitorName(event.currentTarget.value)
+    })
 }
 
 function scrollThreadToBottom() {
@@ -278,6 +338,66 @@ function formatTime(timestamp) {
 
 function fieldValue(container, name) {
   return String(container?.querySelector(`[name="${name}"]`)?.value || '')
+}
+
+function cleanVisitorName(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+}
+
+function conversationSessionKey(inboxId) {
+  return `conversation:${inboxId}`
+}
+
+async function restoreConversationId(inboxId) {
+  try {
+    const response = await client.getSessionValue(conversationSessionKey(inboxId))
+    return String(response?.value || '')
+  } catch (_error) {
+    return ''
+  }
+}
+
+async function rememberConversation(inboxId, conversationId) {
+  try {
+    await client.setSessionValue(
+      conversationSessionKey(inboxId),
+      conversationId
+    )
+  } catch (_error) {}
+}
+
+async function forgetConversation(inboxId) {
+  try {
+    await client.setSessionValue(conversationSessionKey(inboxId), '')
+  } catch (_error) {}
+}
+
+function visitorNameSessionKey(conversationId) {
+  return `visitor-name:${conversationId}`
+}
+
+async function restoreVisitorName(conversationId) {
+  try {
+    const response = await client.getSessionValue(
+      visitorNameSessionKey(conversationId)
+    )
+    return cleanVisitorName(response?.value)
+  } catch (_error) {
+    return ''
+  }
+}
+
+async function rememberVisitorName(conversationId) {
+  if (!state.visitor.name) return
+  try {
+    await client.setSessionValue(
+      visitorNameSessionKey(conversationId),
+      state.visitor.name
+    )
+  } catch (_error) {}
 }
 
 function escapeHtml(value) {

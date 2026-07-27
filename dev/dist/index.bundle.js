@@ -100,14 +100,20 @@ function paginated(fn, table, options = {}, extra = {}) {
 const INBOXES_TABLE = 'inboxes'
 const CONVERSATIONS_TABLE = 'conversations'
 const MESSAGES_TABLE = 'messages'
+const INTERNAL_NOTES_TABLE = 'internal_notes'
+const CANNED_REPLIES_TABLE = 'canned_replies'
 const INBOX_SEARCH_FIELDS = ['name', 'welcome_message']
 const CONVERSATION_SEARCH_FIELDS = [
   'visitor_name',
   'visitor_email',
   'subject',
-  'status'
+  'status',
+  'priority',
+  'tags'
 ]
 const MESSAGE_SEARCH_FIELDS = ['sender_name', 'body']
+const CONVERSATION_STATUSES = ['open', 'pending', 'snoozed', 'resolved']
+const CONVERSATION_PRIORITIES = ['low', 'normal', 'high', 'urgent']
 
 export function createInbox(requestJson) {
   return runJson(() => {
@@ -120,6 +126,15 @@ export function createInbox(requestJson) {
         cleanText(request.welcomeMessage ?? request.welcome_message, 280) ||
         'Send us a message and we will reply here.',
       is_active: request.isActive !== false && request.is_active !== false,
+      accent_color: cleanColor(request.accentColor) || '#f2a900',
+      launcher_text:
+        cleanText(request.launcherText, 40) || 'Chat with support',
+      offline_message:
+        cleanText(request.offlineMessage, 280) ||
+        'We are currently offline. Leave a message and we will reply.',
+      office_hours_enabled: request.officeHoursEnabled === true,
+      office_hours_start: cleanHour(request.officeHoursStart, 9),
+      office_hours_end: cleanHour(request.officeHoursEnd, 17),
       created_at: timestamp,
       updated_at: timestamp
     }
@@ -145,6 +160,30 @@ export function updateInbox(requestJson) {
         request.isActive === undefined && request.is_active === undefined
           ? existing.is_active
           : request.isActive !== false && request.is_active !== false,
+      accent_color:
+        cleanColor(request.accentColor) ||
+        cleanColor(existing.accent_color) ||
+        '#f2a900',
+      launcher_text:
+        cleanText(request.launcherText, 40) ||
+        cleanText(existing.launcher_text, 40) ||
+        'Chat with support',
+      offline_message:
+        cleanText(request.offlineMessage, 280) ||
+        cleanText(existing.offline_message, 280) ||
+        'We are currently offline. Leave a message and we will reply.',
+      office_hours_enabled:
+        request.officeHoursEnabled === undefined
+          ? existing.office_hours_enabled === true
+          : request.officeHoursEnabled === true,
+      office_hours_start: cleanHour(
+        request.officeHoursStart,
+        cleanHour(existing.office_hours_start, 9)
+      ),
+      office_hours_end: cleanHour(
+        request.officeHoursEnd,
+        cleanHour(existing.office_hours_end, 17)
+      ),
       updated_at: system.now()
     }
 
@@ -162,8 +201,8 @@ export function listInboxes(requestJson) {
       searchFields: INBOX_SEARCH_FIELDS,
       sortBy: normalizeInboxSortBy(request.sortBy),
       descending: request.descending === true || request.descending === 'true',
-      limit: normalizePageSize(request.rowsPerPage),
-      offset: pageOffset(request)
+      limit: normalizePageSize(request.rowsPerPage, 100),
+      offset: pageOffset(request, 100)
     })
 
     return {
@@ -199,19 +238,36 @@ export function listConversations(requestJson) {
     const request = parseJsonObject(requestJson)
     const inboxId = requiredText(request.inboxId, 'inboxId', 128)
     const inbox = getInbox(inboxId)
+    const filters = {inbox_id: inboxId}
+    const status = cleanText(request.status, 20)
+    const priority = cleanText(request.priority, 20)
+    if (CONVERSATION_STATUSES.includes(status)) filters.status = status
+    if (CONVERSATION_PRIORITIES.includes(priority)) filters.priority = priority
+
     const response = storage.getPaginated(CONVERSATIONS_TABLE, {
-      filters: {inbox_id: inboxId},
+      filters,
       search: cleanText(request.search, 256),
       searchFields: CONVERSATION_SEARCH_FIELDS,
       sortBy: normalizeConversationSortBy(request.sortBy),
       descending: request.descending !== false && request.descending !== 'false',
-      limit: normalizePageSize(request.rowsPerPage),
-      offset: pageOffset(request)
+      limit: 200,
+      offset: 0
     })
+    const messageStats = inboxMessageStats(inboxId)
+    const conversations = response.data.map(conversation =>
+      privateConversation(conversation, messageStats[conversation.id])
+    )
+    sortConversations(
+      conversations,
+      normalizeConversationSortBy(request.sortBy),
+      request.descending !== false && request.descending !== 'false'
+    )
+    const pageSize = normalizePageSize(request.rowsPerPage, 100)
+    const offset = pageOffset(request, 100)
 
     return {
       inbox: publicInbox(inbox),
-      conversations: response.data.map(privateConversation),
+      conversations: conversations.slice(offset, offset + pageSize),
       total: response.total
     }
   })
@@ -226,20 +282,35 @@ export function listMessages(requestJson) {
       128
     )
     const conversation = getConversation(conversationId)
-    const response = storage.getPaginated(MESSAGES_TABLE, {
+    const limit = normalizePageSize(request.rowsPerPage, 200)
+    const offset = pageOffset(request, 200)
+    const messages = storage.getPaginated(MESSAGES_TABLE, {
       filters: {conversation_id: conversationId},
       search: cleanText(request.search, 256),
       searchFields: MESSAGE_SEARCH_FIELDS,
       sortBy: 'created_at',
       descending: false,
-      limit: normalizePageSize(request.rowsPerPage, 200),
-      offset: pageOffset(request, 200)
+      limit,
+      offset
     })
+    const notes = storage.getPaginated(INTERNAL_NOTES_TABLE, {
+      filters: {conversation_id: conversationId},
+      search: cleanText(request.search, 256),
+      searchFields: MESSAGE_SEARCH_FIELDS,
+      sortBy: 'created_at',
+      descending: false,
+      limit,
+      offset
+    })
+    const combined = [
+      ...messages.data.map(publicMessage),
+      ...notes.data.map(internalNote)
+    ].sort((left, right) => left.createdAt - right.createdAt)
 
     return {
       conversation: privateConversation(conversation),
-      messages: response.data.map(publicMessage),
-      total: response.total
+      messages: combined,
+      total: messages.total + notes.total
     }
   })
 }
@@ -269,6 +340,8 @@ export function replyConversation(requestJson) {
     const updatedConversation = {
       ...conversation,
       status: 'open',
+      snoozed_until: 0,
+      agent_last_read_at: timestamp,
       updated_at: timestamp,
       last_message_at: timestamp
     }
@@ -279,6 +352,41 @@ export function replyConversation(requestJson) {
       conversation: privateConversation(updatedConversation),
       message: publicMessage(message)
     }
+  })
+}
+
+export function updateConversation(requestJson) {
+  return runJson(() => {
+    const request = parseJsonObject(requestJson)
+    const conversationId = requiredText(
+      request.conversationId,
+      'conversationId',
+      128
+    )
+    const conversation = getConversation(conversationId)
+    const updatedConversation = {
+      ...conversation,
+      status: hasOwn(request, 'status')
+        ? normalizeStatus(request.status)
+        : normalizeStatus(conversation.status),
+      priority: hasOwn(request, 'priority')
+        ? normalizePriority(request.priority)
+        : normalizePriority(conversation.priority),
+      tags: hasOwn(request, 'tags')
+        ? normalizeTags(request.tags)
+        : normalizeTags(conversation.tags),
+      snoozed_until: hasOwn(request, 'snoozedUntil')
+        ? normalizeTimestamp(request.snoozedUntil)
+        : normalizeTimestamp(conversation.snoozed_until),
+      updated_at: system.now()
+    }
+    if (updatedConversation.status !== 'snoozed') {
+      updatedConversation.snoozed_until = 0
+    }
+
+    storage.set(CONVERSATIONS_TABLE, updatedConversation)
+    publishConversation(updatedConversation, 'conversation.updated')
+    return {conversation: privateConversation(updatedConversation)}
   })
 }
 
@@ -295,11 +403,110 @@ export function resolveConversation(requestJson) {
     const updatedConversation = {
       ...conversation,
       status: 'resolved',
+      snoozed_until: 0,
       updated_at: system.now()
     }
     storage.set(CONVERSATIONS_TABLE, updatedConversation)
     publishConversation(updatedConversation, 'conversation.resolved')
     return {conversation: privateConversation(updatedConversation)}
+  })
+}
+
+export function markConversationRead(requestJson) {
+  return runJson(() => {
+    const request = parseJsonObject(requestJson)
+    const conversationId = requiredText(
+      request.conversationId,
+      'conversationId',
+      128
+    )
+    const conversation = getConversation(conversationId)
+    const updatedConversation = {
+      ...conversation,
+      agent_last_read_at: system.now()
+    }
+    storage.set(CONVERSATIONS_TABLE, updatedConversation)
+    return {conversation: privateConversation(updatedConversation)}
+  })
+}
+
+export function addInternalNote(requestJson) {
+  return runJson(() => {
+    const request = parseJsonObject(requestJson)
+    const conversationId = requiredText(
+      request.conversationId,
+      'conversationId',
+      128
+    )
+    const conversation = getConversation(conversationId)
+    const note = {
+      id: system.id('note'),
+      conversation_id: conversationId,
+      inbox_id: conversation.inbox_id,
+      sender_name: cleanText(request.name, 80) || 'Support',
+      body: requiredMessage(request.body ?? request.message),
+      created_at: system.now()
+    }
+    storage.set(INTERNAL_NOTES_TABLE, note)
+    return {note: internalNote(note)}
+  })
+}
+
+export function listCannedReplies(requestJson) {
+  return runJson(() => {
+    const request = parseJsonObject(requestJson)
+    const inboxId = requiredText(request.inboxId, 'inboxId', 128)
+    getInbox(inboxId)
+    const response = storage.getPaginated(CANNED_REPLIES_TABLE, {
+      filters: {inbox_id: inboxId},
+      search: cleanText(request.search, 256),
+      searchFields: ['title', 'body'],
+      sortBy: 'title',
+      descending: false,
+      limit: normalizePageSize(request.rowsPerPage, 100),
+      offset: pageOffset(request, 100)
+    })
+    return {
+      cannedReplies: response.data.map(cannedReply),
+      total: response.total
+    }
+  })
+}
+
+export function saveCannedReply(requestJson) {
+  return runJson(() => {
+    const request = parseJsonObject(requestJson)
+    const inboxId = requiredText(request.inboxId, 'inboxId', 128)
+    getInbox(inboxId)
+    const timestamp = system.now()
+    const existingId = cleanId(request.id)
+    const existing = existingId
+      ? storage.get(CANNED_REPLIES_TABLE, existingId)
+      : null
+    if (existing && existing.inbox_id !== inboxId) {
+      throw new Error('Canned reply does not belong to this inbox.')
+    }
+    const reply = {
+      id: existingId || system.id('reply'),
+      inbox_id: inboxId,
+      title: requiredText(request.title, 'title', 80),
+      body: requiredMessage(request.body),
+      created_at: Number(existing?.created_at || timestamp),
+      updated_at: timestamp
+    }
+    storage.set(CANNED_REPLIES_TABLE, reply)
+    return {cannedReply: cannedReply(reply)}
+  })
+}
+
+export function deleteCannedReply(requestJson) {
+  return runJson(() => {
+    const request = parseJsonObject(requestJson)
+    const replyId = requiredText(request.replyId, 'replyId', 128)
+    const existing = storage.get(CANNED_REPLIES_TABLE, replyId)
+    if (!existing) throw new Error('Canned reply not found.')
+    storage.delete(CANNED_REPLIES_TABLE, replyId)
+    return {id: replyId, deleted: true}
   })
 }
 
@@ -332,6 +539,10 @@ export function startConversation(requestJson) {
       visitor_email: cleanText(request.email, 160),
       subject,
       status: 'open',
+      priority: 'normal',
+      tags: [],
+      agent_last_read_at: 0,
+      snoozed_until: 0,
       created_at: timestamp,
       updated_at: timestamp,
       last_message_at: timestamp
@@ -391,12 +602,25 @@ export function postPublicMessage(requestJson) {
     if (conversation.status === 'resolved') {
       throw new Error('This conversation has been resolved.')
     }
+    const timestamp = system.now()
+    const recent = storage.getPublicPaginated(MESSAGES_TABLE, conversationId, {
+      sortBy: 'created_at',
+      descending: true,
+      limit: 1,
+      offset: 0
+    })
+    if (
+      recent.data.length &&
+      timestamp - Number(recent.data[0].created_at || 0) < 1
+    ) {
+      throw new Error('Please wait before sending another message.')
+    }
     const message = appendPublicMessage(conversation, {
       body: requiredMessage(request.body ?? request.message),
       senderName:
         cleanText(request.name, 80) || conversation.visitor_name || 'Guest',
       senderType: 'visitor',
-      timestamp: system.now()
+      timestamp
     })
 
     publishMessage(conversation, message)
@@ -421,6 +645,54 @@ function appendPublicMessage(conversation, input) {
     conversation_id: conversation.id,
     ...row
   }
+}
+
+function inboxMessageStats(inboxId) {
+  const response = storage.getPaginated(MESSAGES_TABLE, {
+    filters: {inbox_id: inboxId},
+    sortBy: 'created_at',
+    descending: false,
+    limit: 1000,
+    offset: 0
+  })
+  const stats = {}
+  for (const message of response.data) {
+    const conversationId = message.conversation_id
+    if (!stats[conversationId]) {
+      stats[conversationId] = {
+        lastMessageAt: 0,
+        visitorMessageTimes: []
+      }
+    }
+    const createdAt = Number(message.created_at || 0)
+    stats[conversationId].lastMessageAt = Math.max(
+      stats[conversationId].lastMessageAt,
+      createdAt
+    )
+    if (message.sender_type === 'visitor') {
+      stats[conversationId].visitorMessageTimes.push(createdAt)
+    }
+  }
+  return stats
+}
+
+function sortConversations(conversations, sortBy, descending) {
+  const publicField = {
+    created_at: 'createdAt',
+    updated_at: 'updatedAt',
+    last_message_at: 'lastMessageAt',
+    visitor_name: 'visitorName',
+    priority: 'priority'
+  }[sortBy]
+  conversations.sort((left, right) => {
+    const a = left[publicField]
+    const b = right[publicField]
+    const result =
+      typeof a === 'number' && typeof b === 'number'
+        ? a - b
+        : String(a || '').localeCompare(String(b || ''))
+    return descending ? -result : result
+  })
 }
 
 function publishMessage(conversation, message) {
@@ -467,11 +739,21 @@ function getPublicConversationById(conversationId) {
 }
 
 function publicInbox(inbox) {
+  const current = system.now()
   return {
     id: inbox.id,
     name: inbox.name,
     welcomeMessage: inbox.welcome_message,
     isActive: inbox.is_active === true,
+    accentColor: cleanColor(inbox.accent_color) || '#f2a900',
+    launcherText: cleanText(inbox.launcher_text, 40) || 'Chat with support',
+    offlineMessage:
+      cleanText(inbox.offline_message, 280) ||
+      'We are currently offline. Leave a message and we will reply.',
+    officeHoursEnabled: inbox.office_hours_enabled === true,
+    officeHoursStart: cleanHour(inbox.office_hours_start, 9),
+    officeHoursEnd: cleanHour(inbox.office_hours_end, 17),
+    isOnline: inbox.is_active === true && isWithinOfficeHours(inbox, current),
     createdAt: Number(inbox.created_at || 0),
     updatedAt: Number(inbox.updated_at || 0)
   }
@@ -490,10 +772,23 @@ function publicConversation(conversation) {
   }
 }
 
-function privateConversation(conversation) {
+function privateConversation(conversation, stats = null) {
+  const agentLastReadAt = Number(conversation.agent_last_read_at || 0)
+  const visitorMessageTimes = stats?.visitorMessageTimes || []
   return {
     ...publicConversation(conversation),
-    visitorEmail: conversation.visitor_email
+    visitorEmail: conversation.visitor_email,
+    priority: normalizePriority(conversation.priority),
+    tags: normalizeTags(conversation.tags),
+    unreadCount: visitorMessageTimes.filter(
+      timestamp => timestamp > agentLastReadAt
+    ).length,
+    agentLastReadAt,
+    snoozedUntil: normalizeTimestamp(conversation.snoozed_until),
+    lastMessageAt: Math.max(
+      Number(conversation.last_message_at || 0),
+      Number(stats?.lastMessageAt || 0)
+    )
   }
 }
 
@@ -507,6 +802,40 @@ function publicMessage(message) {
     body: message.body,
     createdAt: Number(message.created_at || 0)
   }
+}
+
+function internalNote(note) {
+  return {
+    id: note.id,
+    conversationId: note.conversation_id,
+    inboxId: note.inbox_id,
+    senderType: 'internal_note',
+    senderName: note.sender_name,
+    body: note.body,
+    createdAt: Number(note.created_at || 0)
+  }
+}
+
+function cannedReply(reply) {
+  return {
+    id: reply.id,
+    inboxId: reply.inbox_id,
+    title: reply.title,
+    body: reply.body,
+    createdAt: Number(reply.created_at || 0),
+    updatedAt: Number(reply.updated_at || 0)
+  }
+}
+
+function isWithinOfficeHours(inbox, timestamp) {
+  if (inbox.office_hours_enabled !== true) return true
+  const start = cleanHour(inbox.office_hours_start, 9)
+  const end = cleanHour(inbox.office_hours_end, 17)
+  if (start === end) return false
+  const hour = new Date(timestamp * 1000).getUTCHours()
+  return start < end
+    ? hour >= start && hour < end
+    : hour >= start || hour < end
 }
 
 function runJson(fn) {
@@ -559,8 +888,38 @@ function cleanMessage(value, maxLength) {
     .slice(0, maxLength)
 }
 
+function cleanColor(value) {
+  const color = cleanText(value, 7)
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : ''
+}
+
+function cleanHour(value, fallback) {
+  const number = Number(value)
+  if (!Number.isInteger(number) || number < 0 || number > 23) return fallback
+  return number
+}
+
 function normalizeStatus(value) {
-  return value === 'resolved' ? 'resolved' : 'open'
+  const status = cleanText(value, 20)
+  return CONVERSATION_STATUSES.includes(status) ? status : 'open'
+}
+
+function normalizePriority(value) {
+  const priority = cleanText(value, 20)
+  return CONVERSATION_PRIORITIES.includes(priority) ? priority : 'normal'
+}
+
+function normalizeTags(value) {
+  const tags = Array.isArray(value) ? value : String(value || '').split(',')
+  return [
+    ...new Set(tags.map(tag => cleanText(tag, 32).toLowerCase()).filter(Boolean))
+  ].slice(0, 10)
+}
+
+function normalizeTimestamp(value) {
+  const number = Number(value || 0)
+  if (!Number.isFinite(number) || number <= 0) return 0
+  return Math.trunc(number)
 }
 
 function normalizePageSize(value, fallback = 25) {
@@ -587,9 +946,17 @@ function normalizeInboxSortBy(value) {
 }
 
 function normalizeConversationSortBy(value) {
-  return ['created_at', 'updated_at', 'last_message_at', 'visitor_name'].includes(
-    value
-  )
+  return [
+    'created_at',
+    'updated_at',
+    'last_message_at',
+    'visitor_name',
+    'priority'
+  ].includes(value)
     ? value
     : 'last_message_at'
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key)
 }
