@@ -14,6 +14,8 @@ const state = {
   inboxes: [],
   loading: '',
   messages: [],
+  internalNoteDraft: '',
+  replyDraft: '',
   selectedConversation: null,
   selectedInbox: null,
   unsubscribeConversation: null,
@@ -68,22 +70,22 @@ async function fetchInboxes() {
 
 async function saveInbox() {
   const container = byId('inbox-form')
+  const payload = {
+    name: fieldValue(container, 'name'),
+    welcomeMessage: fieldValue(container, 'welcomeMessage'),
+    isActive: Boolean(container?.querySelector('[name="isActive"]')?.checked),
+    accentColor: fieldValue(container, 'accentColor'),
+    launcherText: fieldValue(container, 'launcherText'),
+    offlineMessage: fieldValue(container, 'offlineMessage'),
+    officeHoursEnabled: Boolean(
+      container?.querySelector('[name="officeHoursEnabled"]')?.checked
+    ),
+    officeHoursStart: Number(fieldValue(container, 'officeHoursStart')),
+    officeHoursEnd: Number(fieldValue(container, 'officeHoursEnd'))
+  }
   await withError(async () => {
     state.loading = 'saving'
     render()
-    const payload = {
-      name: fieldValue(container, 'name'),
-      welcomeMessage: fieldValue(container, 'welcomeMessage'),
-      isActive: Boolean(container?.querySelector('[name="isActive"]')?.checked),
-      accentColor: fieldValue(container, 'accentColor'),
-      launcherText: fieldValue(container, 'launcherText'),
-      offlineMessage: fieldValue(container, 'offlineMessage'),
-      officeHoursEnabled: Boolean(
-        container?.querySelector('[name="officeHoursEnabled"]')?.checked
-      ),
-      officeHoursStart: Number(fieldValue(container, 'officeHoursStart')),
-      officeHoursEnd: Number(fieldValue(container, 'officeHoursEnd'))
-    }
     const response = state.form.id
       ? await client.updateInbox(state.form.id, payload)
       : await client.createInbox(payload)
@@ -158,6 +160,8 @@ async function selectConversation(conversationId) {
     state.conversations.find(item => item.id === conversationId) || null
   if (!conversation) return
   state.selectedConversation = conversation
+  state.internalNoteDraft = ''
+  state.replyDraft = ''
   render()
   await subscribeConversation(conversation.id)
   await Promise.all([
@@ -187,7 +191,7 @@ async function fetchMessages() {
 
 async function replyToConversation() {
   if (!state.selectedConversation) return
-  const body = fieldValue(byId('reply-box'), 'body').trim()
+  const body = state.replyDraft.trim()
   if (!body) return
   await withError(async () => {
     state.loading = 'replying'
@@ -198,6 +202,7 @@ async function replyToConversation() {
     )
     state.selectedConversation =
       response.conversation || state.selectedConversation
+    state.replyDraft = ''
     addMessage(response.message)
     await fetchConversations()
   }, 'Could not send reply.')
@@ -250,8 +255,7 @@ async function saveConversationDetails() {
 
 async function addInternalNote() {
   if (!state.selectedConversation) return
-  const container = byId('note-box')
-  const body = fieldValue(container, 'body').trim()
+  const body = state.internalNoteDraft.trim()
   if (!body) return
   await withError(async () => {
     state.loading = 'adding-note'
@@ -260,6 +264,7 @@ async function addInternalNote() {
       state.selectedConversation.id,
       {body}
     )
+    state.internalNoteDraft = ''
     addMessage(response.note)
   }, 'Could not add internal note.')
   state.loading = ''
@@ -302,6 +307,7 @@ function applyCannedReply(replyId) {
   const reply = state.cannedReplies.find(item => item.id === replyId)
   const textarea = byId('reply-box')?.querySelector('[name="body"]')
   if (reply && textarea) {
+    state.replyDraft = reply.body
     textarea.value = reply.body
     textarea.focus()
   }
@@ -398,7 +404,7 @@ async function withError(fn, fallback) {
 
 function render() {
   root.innerHTML = `
-    <main class="sc-shell q-pa-md">
+    <main class="sc-shell q-pa-md" data-loading="${attr(state.loading)}">
       <header class="row items-center justify-between q-mb-md q-gutter-md">
         <div>
           <h1 class="text-h5 text-weight-bold q-my-none">Support Chat</h1>
@@ -491,7 +497,7 @@ function renderInboxForm() {
         </label>
       </div>
       <button class="q-btn bg-primary text-white full-width" type="button" data-action="save-inbox" ${
-        state.loading === 'saving' ? 'disabled' : ''
+        ['inboxes', 'saving'].includes(state.loading) ? 'disabled' : ''
       }>${state.form.id ? 'Save inbox' : 'Create inbox'}</button>
     </div>
   `
@@ -733,14 +739,16 @@ function renderConversationThread() {
         }
         <textarea class="sc-input" name="body" maxlength="2000" placeholder="Reply" ${
           state.selectedConversation.status === 'resolved' ? 'disabled' : ''
-        } data-testid="agent-reply"></textarea>
+        } data-testid="agent-reply">${escapeHtml(state.replyDraft)}</textarea>
         <button class="q-btn bg-primary text-white" type="button" data-action="send-reply" ${
           state.selectedConversation.status === 'resolved' ? 'disabled' : ''
         }>Send</button>
       </div>
 
       <div id="note-box" class="q-gutter-sm q-mt-md">
-        <textarea class="sc-input sc-note-input" name="body" maxlength="2000" placeholder="Internal note (visitors cannot see this)" data-testid="internal-note"></textarea>
+        <textarea class="sc-input sc-note-input" name="body" maxlength="2000" placeholder="Internal note (visitors cannot see this)" data-testid="internal-note">${escapeHtml(
+          state.internalNoteDraft
+        )}</textarea>
         <button class="q-btn q-btn--flat" type="button" data-action="add-note">Add internal note</button>
       </div>
     </div>
@@ -816,6 +824,18 @@ function bindEvents() {
     cannedSelect.addEventListener('change', event => {
       applyCannedReply(event.currentTarget.value)
       event.currentTarget.value = ''
+    })
+  }
+  const replyInput = byId('reply-box')?.querySelector('[name="body"]')
+  if (replyInput) {
+    replyInput.addEventListener('input', event => {
+      state.replyDraft = event.currentTarget.value
+    })
+  }
+  const noteInput = byId('note-box')?.querySelector('[name="body"]')
+  if (noteInput) {
+    noteInput.addEventListener('input', event => {
+      state.internalNoteDraft = event.currentTarget.value
     })
   }
 }
