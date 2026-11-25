@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:wasm": "node scripts/bundle.mjs && npx --yes @bytecodealliance/jco componentize dist/index.bundle.js --disable all --enable clocks --enable random --enable stdio --wit ../wasm/lnbits-extension.wit --world-name supportchat -o ../wasm/module.wasm",
-    "check": "node --check src/index.js && node --check ../static/lnbits-extension-sdk.js && node --check ../static/public.js && node --test test/*.test.js"
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "check": "cargo fmt --check && cargo check --locked --target wasm32-wasip2 && node --check ../static/lnbits-extension-sdk.js && node --check ../static/public.js && node --test test/*.test.js"
   }
 }
